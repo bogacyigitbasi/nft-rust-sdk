@@ -16,7 +16,6 @@ use concordium_rust_sdk::{
 };
 use std::path::PathBuf;
 use structopt::*;
-use thiserror::Error;
 
 use strum_macros::EnumString;
 
