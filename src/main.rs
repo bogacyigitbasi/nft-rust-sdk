@@ -32,6 +32,8 @@ enum TransactionType {
     Transfer,
     #[structopt(about = "TokenMetadata")]
     TokenMetadata,
+    #[structopt(about = "View")]
+    View,
 }
 
 #[derive(StructOpt)]
@@ -53,7 +55,7 @@ enum Action {
         about = "Update the contract and set the provided  using JSON parameters and a \
                  schema."
     )]
-    UpdateWithSchema {
+    WithSchema {
         #[structopt(short, long, help = "Path of the JSON parameter.")]
         parameter: Option<PathBuf>,
         #[structopt(long, help = "Path to the schema.")]
@@ -155,7 +157,19 @@ async fn main() -> anyhow::Result<()> {
                 10000u64.into(),
             ))
         }
-        Action::UpdateWithSchema {
+        Action::Deploy { module_path } => {
+            let contents = std::fs::read(module_path).context("Could not read contract module.")?;
+            let payload: WasmModule =
+                common::Deserial::deserial(&mut std::io::Cursor::new(contents))?;
+            TransactionResult::StateChanging(send::deploy_module(
+                &keys,
+                keys.address,
+                nonce,
+                expiry,
+                payload,
+            ))
+        }
+        Action::WithSchema {
             parameter,
             schema,
             address,
@@ -260,19 +274,40 @@ async fn main() -> anyhow::Result<()> {
 
                     // info
                 }
+                TransactionType::View => {
+                    let rv_schema = schema
+                        .get_receive_return_value_schema("rust_sdk_minting_tutorial", "view")?;
+
+                    let context = ContractContext {
+                        invoker: None, //Account(AccountAddress),
+                        contract: address,
+                        amount: Amount::zero(),
+                        method: OwnedReceiveName::new_unchecked(
+                            "rust_sdk_minting_tutorial.view".to_string(),
+                        ),
+                        parameter: Default::default(),
+                        energy: 1000000.into(),
+                    };
+                    // invoke instance
+                    let info = client
+                        .invoke_instance(&BlockIdentifier::Best, &context)
+                        .await?;
+
+                    match info.response {
+                            concordium_rust_sdk::types::smart_contracts::InvokeContractResult::Success { return_value, .. } => {
+                                let bytes: concordium_rust_sdk::types::smart_contracts::ReturnValue = return_value.unwrap();
+                                // deserialize and print return value
+                                println!( "{}",rv_schema.to_json_string_pretty(&bytes.value)?);//jsonxf::pretty_print(&param_schema.to_json_string_pretty(&bytes.value)?).unwrap());
+                            }
+                            _ => {
+                                println!("Could'nt succesfully invoke the instance. Check the parameters.")
+                            }
+                        }
+                    TransactionResult::None
+
+                    // info
+                }
             }
-        }
-        Action::Deploy { module_path } => {
-            let contents = std::fs::read(module_path).context("Could not read contract module.")?;
-            let payload: WasmModule =
-                common::Deserial::deserial(&mut std::io::Cursor::new(contents))?;
-            TransactionResult::StateChanging(send::deploy_module(
-                &keys,
-                keys.address,
-                nonce,
-                expiry,
-                payload,
-            ))
         }
     };
     // let mut a;
@@ -307,11 +342,14 @@ async fn main() -> anyhow::Result<()> {
                     };
                 }
                 BlockItemSummaryDetails::AccountCreation(_) => (),
-                BlockItemSummaryDetails::Update(_) => (),
+                BlockItemSummaryDetails::Update(_) => {
+                    println!("Transaction finalized in block {:?}.", bs.details);
+                    ()
+                }
             };
         }
         TransactionResult::None => {
-            println!("No state changes, gracefully exiting.");
+            println!("No state changes, already printed, gracefully exiting.");
         }
     }
 
